@@ -117,6 +117,7 @@ async function callGemini(candidates, bookmarks) {
     contents: [{ role: "user", parts: [{ text: userContent }] }],
     generationConfig: {
       responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
       responseSchema: {
         type: "OBJECT",
         properties: {
@@ -138,6 +139,7 @@ async function callGemini(candidates, bookmarks) {
     },
   };
 
+  const startedAt = Date.now();
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
     {
@@ -147,6 +149,7 @@ async function callGemini(candidates, bookmarks) {
       signal: AbortSignal.timeout(170_000),
     }
   );
+  console.log(`Gemini API responded in ${Date.now() - startedAt}ms`);
 
   if (!res.ok) {
     const text = await res.text();
