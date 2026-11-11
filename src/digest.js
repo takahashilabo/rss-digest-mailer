@@ -17,8 +17,8 @@ const CANDIDATE_WINDOW_HOURS = parseInt(process.env.CANDIDATE_WINDOW_HOURS || "2
 const MIN_SELECTED = 5;
 const MAX_SELECTED = 15;
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 const GMAIL_USER = process.env.GMAIL_USER;
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
@@ -81,9 +81,9 @@ async function loadRecentHatenaBookmarks() {
   return bookmarks;
 }
 
-async function callClaude(candidates, bookmarks) {
-  if (!ANTHROPIC_API_KEY) {
-    console.warn("ANTHROPIC_API_KEY not set; skipping AI selection, falling back to newest-first.");
+async function callGemini(candidates, bookmarks) {
+  if (!GEMINI_API_KEY) {
+    console.warn("GEMINI_API_KEY not set; skipping AI selection, falling back to newest-first.");
     return null;
   }
 
@@ -113,58 +113,52 @@ async function callClaude(candidates, bookmarks) {
     JSON.stringify(candidateLines);
 
   const body = {
-    model: ANTHROPIC_MODEL,
-    max_tokens: 4096,
-    system,
-    messages: [{ role: "user", content: userContent }],
-    tools: [
-      {
-        name: "emit_digest",
-        description: "選んだ記事のダイジェストを返す",
-        input_schema: {
-          type: "object",
-          properties: {
-            selected: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  id: { type: "string", description: "候補記事のid（そのまま）" },
-                  summary: { type: "string", description: "記事の1-2文の要約（日本語）" },
-                  why: { type: "string", description: "興味に合う理由の短いコメント（日本語）" },
-                },
-                required: ["id", "summary", "why"],
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: userContent }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          selected: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                id: { type: "STRING", description: "候補記事のid（そのまま）" },
+                summary: { type: "STRING", description: "記事の1-2文の要約（日本語）" },
+                why: { type: "STRING", description: "興味に合う理由の短いコメント（日本語）" },
               },
+              required: ["id", "summary", "why"],
             },
           },
-          required: ["selected"],
         },
+        required: ["selected"],
       },
-    ],
-    tool_choice: { type: "tool", name: "emit_digest" },
+    },
   };
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    }
+  );
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Anthropic API HTTP ${res.status}: ${text.slice(0, 500)}`);
+    throw new Error(`Gemini API HTTP ${res.status}: ${text.slice(0, 500)}`);
   }
 
   const data = await res.json();
-  const toolUse = (data.content || []).find((c) => c.type === "tool_use" && c.name === "emit_digest");
-  if (!toolUse) throw new Error("Anthropic response had no emit_digest tool call");
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini response had no content");
 
-  return toolUse.input.selected || [];
+  const parsed = JSON.parse(text);
+  return parsed.selected || [];
 }
 
 function buildFallbackSelection(candidates) {
@@ -273,9 +267,9 @@ async function main() {
 
   let rawSelection;
   try {
-    rawSelection = await callClaude(candidates, bookmarks);
+    rawSelection = await callGemini(candidates, bookmarks);
   } catch (err) {
-    console.error(`Claude selection failed, falling back to newest-first: ${err.message}`);
+    console.error(`Gemini selection failed, falling back to newest-first: ${err.message}`);
     rawSelection = null;
   }
   if (!rawSelection) rawSelection = buildFallbackSelection(candidates);
