@@ -1,0 +1,14 @@
+{
+  "name": "rss-digest-mailer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Daily interest-filtered digest email, built on github-rss-reader's article data",
+  "type": "commonjs",
+  "scripts": {
+    "digest": "node src/digest.js"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.16",
+    "rss-parser": "^3.13.0"
+  }
+}
