@@ -90,13 +90,11 @@ async function callGemini(candidates, bookmarks) {
   const candidateLines = candidates.map((a) => ({
     id: a.id,
     title: a.title,
-    category: a.category,
     feed: a.feedTitle,
-    pubDate: a.pubDate,
     snippet: (a.contentSnippet || "").slice(0, 200),
   }));
 
-  const bookmarkLines = bookmarks.map((b) => ({ title: b.title, pubDate: b.pubDate }));
+  const bookmarkLines = bookmarks.map((b) => ({ title: b.title }));
 
   const system =
     "あなたは個人向けの毎日のニュースダイジェストを作るキュレーターです。" +
@@ -299,8 +297,15 @@ async function main() {
 
   const html = buildEmailHtml({ selectedArticles, candidateCount: candidates.length, markAllUrl, today });
   const text = buildEmailText({ selectedArticles, candidateCount: candidates.length, markAllUrl, today });
+  const subject = `RSS Digest - ${today} (${selectedArticles.length}件)`;
 
-  await sendEmail({ subject: `RSS Digest - ${today} (${selectedArticles.length}件)`, html, text });
+  if (process.env.DRY_RUN === "true") {
+    console.log(`DRY_RUN: would send "${subject}" to ${RECIPIENT_EMAIL}`);
+    console.log(text);
+    return;
+  }
+
+  await sendEmail({ subject, html, text });
   console.log(`Sent digest with ${selectedArticles.length} articles to ${RECIPIENT_EMAIL}`);
 }
 

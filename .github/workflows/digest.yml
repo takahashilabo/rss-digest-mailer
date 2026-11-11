@@ -5,7 +5,12 @@ on:
     # 08:30 JST == 23:30 UTC (previous day) — 30 min after github-rss-reader's fetch,
     # to give it time to fetch, commit, and rebuild Pages.
     - cron: "30 23 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true にすると実際のメール送信をスキップし、内容をログに出すだけにする"
+        type: boolean
+        default: false
 
 jobs:
   digest:
@@ -30,4 +35,5 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           HATENA_USERNAME: ${{ vars.HATENA_USERNAME }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: npm run digest
