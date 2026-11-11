@@ -144,7 +144,7 @@ async function callGemini(candidates, bookmarks) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(170_000),
     }
   );
 
