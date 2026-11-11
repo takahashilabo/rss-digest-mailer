@@ -74,9 +74,8 @@ async function callGemini(candidates, interestProfile) {
 
   const system =
     "あなたは個人向けの毎日のニュースダイジェストを作るキュレーターです。" +
-    "ユーザーの興味関心プロファイルを参考に、" +
-    "候補記事の中から本当に興味を持ちそうなものだけを選び、各記事に日本語で短い要約と、" +
-    "なぜ興味に合うと判断したかの短いコメントを付けてください。" +
+    "ユーザーの興味関心プロファイルを参考に、候補記事の中から本当に興味を持ちそうなものだけのidを選んでください。" +
+    "要約や説明文は不要で、idの選別だけ行ってください。" +
     `必ず ${MIN_SELECTED}〜${MAX_SELECTED} 件を選んでください（候補がそれより少ない場合は全件）。` +
     "idは与えられた候補のidをそのまま使い、絶対に新しいidを作らないでください。";
 
@@ -97,15 +96,7 @@ async function callGemini(candidates, interestProfile) {
         properties: {
           selected: {
             type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                id: { type: "STRING", description: "候補記事のid（そのまま）" },
-                summary: { type: "STRING", description: "記事の1-2文の要約（日本語）" },
-                why: { type: "STRING", description: "興味に合う理由の短いコメント（日本語）" },
-              },
-              required: ["id", "summary", "why"],
-            },
+            items: { type: "STRING", description: "候補記事のid（そのまま）" },
           },
         },
         required: ["selected"],
@@ -114,53 +105,30 @@ async function callGemini(candidates, interestProfile) {
   };
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-  const RETRY_DELAYS_MS = [3000, 8000, 15000, 30000, 60000];
 
-  let lastErr;
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    const startedAt = Date.now();
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000),
-      });
-      console.log(`Gemini API responded in ${Date.now() - startedAt}ms (attempt ${attempt + 1})`);
+  const startedAt = Date.now();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
+  });
+  console.log(`Gemini API responded in ${Date.now() - startedAt}ms`);
 
-      if (!res.ok) {
-        const errText = await res.text();
-        // 503 (overloaded) and 429 (rate limited) are worth retrying; anything else, fail fast.
-        if ((res.status === 503 || res.status === 429) && attempt < RETRY_DELAYS_MS.length) {
-          lastErr = new Error(`Gemini API HTTP ${res.status}: ${errText.slice(0, 300)}`);
-          console.warn(`${lastErr.message} — retrying in ${RETRY_DELAYS_MS[attempt]}ms`);
-          await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
-          continue;
-        }
-        throw new Error(`Gemini API HTTP ${res.status}: ${errText.slice(0, 500)}`);
-      }
-
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Gemini response had no content");
-
-      return (JSON.parse(text).selected) || [];
-    } catch (err) {
-      if (attempt >= RETRY_DELAYS_MS.length) throw err;
-      lastErr = err;
-      console.warn(`${err.message} — retrying in ${RETRY_DELAYS_MS[attempt]}ms`);
-      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
-    }
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini API HTTP ${res.status}: ${errText.slice(0, 500)}`);
   }
-  throw lastErr;
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini response had no content");
+
+  return JSON.parse(text).selected || [];
 }
 
 function buildFallbackSelection(candidates) {
-  return candidates.slice(0, MAX_SELECTED).map((a) => ({
-    id: a.id,
-    summary: a.contentSnippet || "",
-    why: "",
-  }));
+  return candidates.slice(0, MAX_SELECTED).map((a) => a.id);
 }
 
 // Passes the same date range used to select candidates, rather than an
@@ -195,7 +163,6 @@ function buildEmailHtml({ selectedArticles, candidateCount, markAllUrl, today })
           </div>
           <a href="${escapeHtml(a.link)}" style="font-weight:600;color:#1b1f23;text-decoration:none;font-size:15px;">${escapeHtml(a.title)}</a>
           ${a.summary ? `<p style="color:#444;font-size:13px;margin:6px 0 4px;">${escapeHtml(a.summary)}</p>` : ""}
-          ${a.why ? `<p style="color:#2563eb;font-size:12px;margin:0;">${escapeHtml(a.why)}</p>` : ""}
         </div>`;
     })
     .join("\n");
@@ -219,7 +186,6 @@ function buildEmailText({ selectedArticles, candidateCount, markAllUrl, today })
     lines.push(`[${a.category}] ${a.title}`);
     lines.push(a.link);
     if (a.summary) lines.push(a.summary);
-    if (a.why) lines.push(`→ ${a.why}`);
     lines.push("");
   }
   lines.push(`全て既読にする: ${markAllUrl}`);
@@ -269,8 +235,8 @@ async function main() {
   if (!rawSelection) rawSelection = buildFallbackSelection(candidates);
 
   const selectedArticles = rawSelection
-    .map((s) => {
-      const article = candidatesById.get(s.id);
+    .map((id) => {
+      const article = candidatesById.get(id);
       if (!article) return null;
       return {
         id: article.id,
@@ -278,8 +244,7 @@ async function main() {
         link: article.link,
         category: article.category,
         feedTitle: article.feedTitle,
-        summary: s.summary || "",
-        why: s.why || "",
+        summary: article.contentSnippet || "",
       };
     })
     .filter(Boolean);
