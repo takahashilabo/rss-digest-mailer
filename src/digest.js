@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 // Daily job: pick today's most interesting articles out of github-rss-reader's
-// feed data, using the user's recent Hatena Bookmarks as a live interest
-// signal, and email the result. No Inoreader, no persistent interest profile —
-// everything is recomputed fresh from public data each run.
+// feed data, matched against a static interest profile (interests.md) in this
+// repo. That profile is refreshed by hand roughly monthly (via an interactive
+// Claude Pro/Code session analyzing Hatena Bookmarks in depth — titles alone
+// aren't enough signal for that), not regenerated on every run.
 
+const fs = require("fs");
+const path = require("path");
 const nodemailer = require("nodemailer");
-const Parser = require("rss-parser");
 
 const ARTICLES_URL =
   process.env.ARTICLES_URL || "https://takahashilabo.github.io/github-rss-reader/data/articles.json";
 const READER_BASE_URL =
   process.env.READER_BASE_URL || "https://takahashilabo.github.io/github-rss-reader/";
-const HATENA_USERNAME = process.env.HATENA_USERNAME || "hagemofu";
-const HATENA_PAGES = parseInt(process.env.HATENA_PAGES || "2", 10);
+const INTERESTS_PATH = process.env.INTERESTS_PATH || path.join(__dirname, "..", "interests.md");
 const CANDIDATE_WINDOW_HOURS = parseInt(process.env.CANDIDATE_WINDOW_HOURS || "26", 10);
 const MIN_SELECTED = 5;
 const MAX_SELECTED = 15;
@@ -27,8 +28,6 @@ const RECIPIENT_EMAIL = process.env.RECIPIENT_EMAIL || GMAIL_USER;
 const FETCH_TIMEOUT_MS = 20_000;
 const USER_AGENT = "rss-digest-mailer/1.0 (+https://github.com/; personal daily digest)";
 
-const rssParser = new Parser();
-
 async function fetchJson(url) {
   const res = await fetch(url, {
     headers: { "User-Agent": USER_AGENT },
@@ -36,15 +35,6 @@ async function fetchJson(url) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
   return res.json();
-}
-
-async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
-  return res.text();
 }
 
 async function loadCandidateArticles(windowStart, windowEnd) {
@@ -60,28 +50,16 @@ async function loadCandidateArticles(windowStart, windowEnd) {
   return candidates;
 }
 
-async function loadRecentHatenaBookmarks() {
-  const bookmarks = [];
-  for (let page = 1; page <= HATENA_PAGES; page++) {
-    const url = `https://b.hatena.ne.jp/${encodeURIComponent(HATENA_USERNAME)}/rss?page=${page}`;
-    try {
-      const xml = await fetchText(url);
-      const feed = await rssParser.parseString(xml);
-      for (const item of feed.items || []) {
-        bookmarks.push({
-          title: item.title || "",
-          link: item.link || "",
-          pubDate: item.isoDate || item.pubDate || null,
-        });
-      }
-    } catch (err) {
-      console.warn(`Failed to fetch Hatena bookmarks page ${page}: ${err.message}`);
-    }
+function loadInterestProfile() {
+  try {
+    return fs.readFileSync(INTERESTS_PATH, "utf8");
+  } catch (err) {
+    console.warn(`Could not read interest profile at ${INTERESTS_PATH}: ${err.message}`);
+    return "";
   }
-  return bookmarks;
 }
 
-async function callGemini(candidates, bookmarks) {
+async function callGemini(candidates, interestProfile) {
   if (!GEMINI_API_KEY) {
     console.warn("GEMINI_API_KEY not set; skipping AI selection, falling back to newest-first.");
     return null;
@@ -94,19 +72,17 @@ async function callGemini(candidates, bookmarks) {
     snippet: (a.contentSnippet || "").slice(0, 200),
   }));
 
-  const bookmarkLines = bookmarks.map((b) => ({ title: b.title }));
-
   const system =
     "あなたは個人向けの毎日のニュースダイジェストを作るキュレーターです。" +
-    "ユーザーの直近のはてなブックマーク（興味の最新シグナル）を参考に、" +
+    "ユーザーの興味関心プロファイルを参考に、" +
     "候補記事の中から本当に興味を持ちそうなものだけを選び、各記事に日本語で短い要約と、" +
     "なぜ興味に合うと判断したかの短いコメントを付けてください。" +
     `必ず ${MIN_SELECTED}〜${MAX_SELECTED} 件を選んでください（候補がそれより少ない場合は全件）。` +
     "idは与えられた候補のidをそのまま使い、絶対に新しいidを作らないでください。";
 
   const userContent =
-    "## 直近のはてなブックマーク（興味シグナル）\n" +
-    JSON.stringify(bookmarkLines) +
+    "## ユーザーの興味関心プロファイル\n" +
+    (interestProfile || "(プロファイル未設定)") +
     "\n\n## 今日の候補記事\n" +
     JSON.stringify(candidateLines);
 
@@ -138,7 +114,7 @@ async function callGemini(candidates, bookmarks) {
   };
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-  const RETRY_DELAYS_MS = [2000, 5000, 10000];
+  const RETRY_DELAYS_MS = [3000, 8000, 15000, 30000, 60000];
 
   let lastErr;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
@@ -280,12 +256,12 @@ async function main() {
   }
 
   const candidatesById = new Map(candidates.map((a) => [a.id, a]));
-  const bookmarks = await loadRecentHatenaBookmarks();
-  console.log(`Loaded ${bookmarks.length} recent Hatena bookmarks as the interest signal`);
+  const interestProfile = loadInterestProfile();
+  console.log(`Loaded interest profile (${interestProfile.length} chars) from ${INTERESTS_PATH}`);
 
   let rawSelection;
   try {
-    rawSelection = await callGemini(candidates, bookmarks);
+    rawSelection = await callGemini(candidates, interestProfile);
   } catch (err) {
     console.error(`Gemini selection failed, falling back to newest-first: ${err.message}`);
     rawSelection = null;
