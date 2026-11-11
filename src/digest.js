@@ -137,29 +137,46 @@ async function callGemini(candidates, bookmarks) {
     },
   };
 
-  const startedAt = Date.now();
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(170_000),
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const RETRY_DELAYS_MS = [2000, 5000, 10000];
+
+  let lastErr;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    const startedAt = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
+      });
+      console.log(`Gemini API responded in ${Date.now() - startedAt}ms (attempt ${attempt + 1})`);
+
+      if (!res.ok) {
+        const errText = await res.text();
+        // 503 (overloaded) and 429 (rate limited) are worth retrying; anything else, fail fast.
+        if ((res.status === 503 || res.status === 429) && attempt < RETRY_DELAYS_MS.length) {
+          lastErr = new Error(`Gemini API HTTP ${res.status}: ${errText.slice(0, 300)}`);
+          console.warn(`${lastErr.message} — retrying in ${RETRY_DELAYS_MS[attempt]}ms`);
+          await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+          continue;
+        }
+        throw new Error(`Gemini API HTTP ${res.status}: ${errText.slice(0, 500)}`);
+      }
+
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Gemini response had no content");
+
+      return (JSON.parse(text).selected) || [];
+    } catch (err) {
+      if (attempt >= RETRY_DELAYS_MS.length) throw err;
+      lastErr = err;
+      console.warn(`${err.message} — retrying in ${RETRY_DELAYS_MS[attempt]}ms`);
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
     }
-  );
-  console.log(`Gemini API responded in ${Date.now() - startedAt}ms`);
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Gemini API HTTP ${res.status}: ${text.slice(0, 500)}`);
   }
-
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Gemini response had no content");
-
-  const parsed = JSON.parse(text);
-  return parsed.selected || [];
+  throw lastErr;
 }
 
 function buildFallbackSelection(candidates) {
