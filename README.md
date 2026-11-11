@@ -43,7 +43,7 @@ Gemini APIの呼び出しに失敗した場合は、新しい順に最大15件�
 | `HATENA_USERNAME` | `hagemofu` | はてなブックマークのユーザー名 |
 | `HATENA_PAGES` | `2` | 取得するはてなブックマークのページ数（1ページ20件） |
 | `CANDIDATE_WINDOW_HOURS` | `26` | 候補記事とみなす公開からの経過時間 |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | ダイジェスト生成に使うモデル |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | ダイジェスト生成に使うモデル |
 
 ## ローカル実行
 
