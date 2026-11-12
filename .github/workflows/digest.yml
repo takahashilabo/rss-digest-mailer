@@ -1,10 +1,10 @@
 name: Send daily digest
 
 on:
-  schedule:
-    # 08:30 JST == 23:30 UTC (previous day) — 30 min after github-rss-reader's fetch,
-    # to give it time to fetch, commit, and rebuild Pages.
-    - cron: "30 23 * * *"
+  # Paused 2026-11-12: project put on hold (free-tier AI selection didn't clear
+  # the bar for the effort/cost involved). The schedule trigger is removed so
+  # this cannot fire Gemini/send mail on its own; workflow_dispatch is kept
+  # only so it can still be run by hand if revisited.
   workflow_dispatch:
     inputs:
       dry_run:
