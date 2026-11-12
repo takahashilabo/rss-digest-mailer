@@ -44,7 +44,7 @@ Gemini APIの呼び出しに失敗した場合は、リトライはせず即座�
 | `READER_BASE_URL` | github-rss-readerのPages URL | `mark-all.html`の起点 |
 | `INTERESTS_PATH` | リポジトリ直下の`interests.md` | 興味関心プロファイルのファイルパス |
 | `CANDIDATE_WINDOW_HOURS` | `26` | 候補記事とみなす公開からの経過時間 |
-| `GEMINI_MODEL` | `gemini-3.8-flash` | ダイジェスト生成に使うモデル |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | ダイジェスト生成に使うモデル |
 
 ## ローカル実行
 
