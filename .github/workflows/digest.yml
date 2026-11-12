@@ -28,6 +28,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Debug - list available Gemini models
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY" \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);for (const m of (j.models||[])) console.log(m.name, '|', (m.supportedGenerationMethods||[]).join(','));})"
+
       - name: Send digest
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
