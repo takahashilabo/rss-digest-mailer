@@ -90,7 +90,6 @@ async function callGemini(candidates, interestProfile) {
     contents: [{ role: "user", parts: [{ text: userContent }] }],
     generationConfig: {
       responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: 0 },
       responseSchema: {
         type: "OBJECT",
         properties: {
